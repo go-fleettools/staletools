@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ⛔ A WORKFLOW THAT FAILS TO PARSE REPORTS NOTHING AT ALL — no red cross,
+  # no jobs, and the check list stays EMPTY, which reads exactly like a check
+  # that has not started yet. That is the very confusion this tool exists to
+  # refuse, so the repository had better not be the one producing it.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  test:
+    name: build + vet + test
+    strategy:
+      fail-fast: false
+      matrix:
+        # This tool spawns a process and reads its output — behaviour that
+        # differs by operating system, and the one place a "works here"
+        # would be least surprising and most wrong. The helper-process test
+        # is here precisely so Windows is not an exception.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # ⛔ bash ON EVERY LANE, not per step: GitHub's default shell on Windows
+    # is PowerShell, where an inline VAR=value prefix is a syntax error
+    # rather than an assignment.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # ⛔ SAY WHICH TOOLCHAIN RAN. A green check that does not record the
+      # compiler behind it makes every figure measured under it
+      # unattributable.
+      - run: go version
+      - name: gofmt
+        run: |
+          drift=$(gofmt -l .)
+          if [ -n "$drift" ]; then echo "::error::not gofmt-clean:"; echo "$drift"; exit 1; fi
+      # ⛔ BUILD OUT OF THE TREE. A bare `go build ./...` drops the binary
+      # beside the source, where the next `git add -A` would commit it —
+      # which is how go-fleettools/fleettools v0.1.0 came to ship 8.4 MB of
+      # executables. TestNoExecutableIsCommitted asks git what is TRACKED,
+      # so an artefact here would not fail it; it would merely sit there
+      # waiting for someone careless.
+      - name: build
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/" ./...
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -timeout 5m ./...
+
+
+  # The tool's whole claim is that it can tell a stale SOURCE READER from an
+  # old CLI. A runner has neither, so there is nothing real to point it at —
+  # but it can be pointed at ITSELF, which proves the binary runs, reads
+  # build info, and reports totals rather than silence.
+  selfcheck:
+    name: it reports on this machine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go version
+      - name: build
+        run: go build -o "$RUNNER_TEMP/staletools" .
+      - name: it reads a real Go binary and says so
+        run: |
+          set -euo pipefail
+          out=$("$RUNNER_TEMP/staletools" -all "$RUNNER_TEMP" || true)
+          echo "$out"
+          # ⛔ ASSERT ON A COUNT, not on the absence of complaints. A tool
+          # that found nothing to read also prints no complaints, and those
+          # two outcomes must not look alike — which is the whole reason it
+          # prints totals even when they are zero.
+          echo "$out" | grep -q "1 Go tool(s)" || {
+            echo "::error::it did not find the binary it was pointed at"; exit 1; }
+          echo "$out" | grep -q "staletools" || {
+            echo "::error::the binary is not named in the listing"; exit 1; }
+      - name: an empty directory questions itself rather than reporting all clear
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/empty"
+          out=$("$RUNNER_TEMP/staletools" "$RUNNER_TEMP/empty" || true)
+          echo "$out" | grep -q "no Go binaries found" || {
+            echo "::error::an empty scan passed for a clean one"; exit 1; }
