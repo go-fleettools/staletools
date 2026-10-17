@@ -85,7 +85,7 @@ func TestReportLeadsWithTheOnesThatMisreport(t *testing.T) {
 		{name: "current", dir: "/a", goVersion: "go1.27.1", path: "example.com/current"},
 	}
 	var b strings.Builder
-	if !report(&b, tools, "go1.27.1", false) {
+	if !report(&b, tools, "go1.27.1", false, false) {
 		t.Error("a stale source reader did not set the problem flag")
 	}
 	got := b.String()
@@ -119,7 +119,7 @@ func TestDuplicatesAreReportedOnlyWhenTheyDisagree(t *testing.T) {
 		{name: "t", dir: "/b", goVersion: "go1.27.1"},
 	}
 	var b strings.Builder
-	if report(&b, same, "go1.27.1", false) {
+	if report(&b, same, "go1.27.1", false, false) {
 		t.Error("two identical copies were reported as a problem")
 	}
 	if strings.Contains(b.String(), "INSTALLED TWICE") {
@@ -131,7 +131,7 @@ func TestDuplicatesAreReportedOnlyWhenTheyDisagree(t *testing.T) {
 		{name: "t", dir: "/b", goVersion: "go1.26.4"},
 	}
 	b.Reset()
-	if !report(&b, differ, "go1.27.1", false) {
+	if !report(&b, differ, "go1.27.1", false, false) {
 		t.Error("a shadowed tool did not set the problem flag")
 	}
 	got := b.String()
@@ -150,7 +150,7 @@ func TestDuplicatesAreReportedOnlyWhenTheyDisagree(t *testing.T) {
 // directory".
 func TestReportOfNothingSaysSo(t *testing.T) {
 	var b strings.Builder
-	if report(&b, nil, "go1.27.1", false) {
+	if report(&b, nil, "go1.27.1", false, false) {
 		t.Error("an empty scan was a problem")
 	}
 	if !strings.Contains(b.String(), "no Go binaries found") {

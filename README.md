@@ -101,3 +101,47 @@ would be stale if we moved to this?"* before moving.
 A command that says nothing when all is well cannot be told apart from one that failed to
 look — and this one walks directories that may not exist. If it finds no Go binaries at
 all it says so and asks whether that was the right directory.
+
+## `-releases` — the other way a tool is not what you think
+
+    staletools -releases
+
+The default axis asks what a tool was **built with**. This one asks what it **is**:
+
+```
+an OLDER RELEASE of themselves — what runs is not what the repository says.
+→ marks the 2 in a directory the shell SEARCHES; the other 19 are in one nothing reads:
+→ pkgx            v0.16.1  → v0.17.1   2 release(s) back   ~/.local/bin
+                  go install github.com/go-pkgx/pkgx@v0.17.1
+→ bk              v0.27.0  → v0.28.0   1 release(s) back   ~/.local/bin
+  tui-explorer    v0.4.1   → v0.62.0  65 release(s) back   ~/go/bin
+```
+
+The founding case: on 2026-10-11 the `gitpush` on `PATH` was **v0.5.0** while its
+repository was at **v0.6.3**, and the global pre-push hook was built from v0.3.2.
+Nothing looked wrong — *"the hook is the floor underneath"* reads as a statement
+about the current code, and it was a week behind. `go version -m` on each binary
+would have said so, and nobody runs that on sixty binaries by hand.
+
+### `→` is the whole point
+
+The first version of this sorted by distance alone. Measured on the machine it was
+written for: of 30 lines, **24 named binaries in `~/go/bin`, which is not on that
+`PATH`** — `tui-explorer`, 65 releases behind in a directory nothing reads, printed
+*above* `pkgx`, 2 behind in the directory that runs. Eighty per cent of the report
+was noise and it was at the top. **One release behind in a directory that runs beats
+sixty-five behind in one nothing reads.**
+
+### The oracle is `go list -m -versions`, not a tag listing
+
+Three reasons: it answers the question actually being asked — what `@latest` would
+install; it **orders the versions itself**, semantically, so this tool needs no
+version parser and no dependency (it has none); and it costs no GitHub API budget,
+which on this machine is shared with Renovate and is exhaustible.
+
+⛔ And it is **not** a comparison against the newest string. A tool built from an
+unreleased commit carries a pseudo-version that appears nowhere in the list, so it is
+reported under its own heading — *"built from a commit that is NOT a release"* —
+rather than mislabelled as behind. A module the proxy could not answer about is
+reported separately again: **not a verdict of up to date.**
+
