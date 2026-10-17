@@ -45,6 +45,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/version"
 	"io"
 	"io/fs"
 	"os"
@@ -179,7 +180,7 @@ func report(w io.Writer, tools []tool, want string, all bool) (problem bool) {
 
 	var stale, staleSource []tool
 	for _, t := range tools {
-		if t.goVersion == want {
+		if !behind(t.goVersion, want) {
 			continue
 		}
 		stale = append(stale, t)
@@ -229,7 +230,7 @@ func report(w io.Writer, tools []tool, want string, all bool) (problem bool) {
 		fmt.Fprintf(w, "\nevery Go tool found:\n")
 		for _, t := range tools {
 			mark := " "
-			if t.goVersion != want {
+			if behind(t.goVersion, want) {
 				mark = "·"
 			}
 			src := ""
@@ -271,4 +272,25 @@ func readsGoSource(deps []string) bool {
 		}
 	}
 	return false
+}
+
+// behind reports whether a tool's toolchain is OLDER than the wanted one.
+//
+// ⛔ It used to be `t.goVersion != want`, a string inequality, and that is not the
+// question this command asks. The founding case is an analyser built with an OLDER
+// Go than the source it reads: it does not fail, it misreports. A NEWER one does
+// not have that problem — it understands everything the older source can contain.
+//
+// Measured on 2026-10-17, on a machine running go1.27.1: thirteen tools built with
+// go1.27.2 were listed under "READ GO SOURCE and are behind go1.27.1 — these do not
+// fail, they MISREPORT". They were ahead. A command whose whole purpose is to say
+// who misreports was misreporting, and the word in its own output said so: the
+// header says "behind", and `!=` cannot answer that.
+//
+// go/version is the standard library's answer and knows that go1.27.10 is newer
+// than go1.27.2, which a lexicographic comparison gets wrong in the other
+// direction. An unparseable version compares less than a valid one, so a binary
+// whose toolchain cannot be read is reported rather than quietly passed.
+func behind(got, want string) bool {
+	return version.Compare(got, want) < 0
 }

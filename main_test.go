@@ -159,3 +159,34 @@ func TestReportOfNothingSaysSo(t *testing.T) {
 }
 
 var _ io.Writer = (*strings.Builder)(nil)
+
+// ⛔ Le défaut mesuré le 2026-10-17 sur une machine en go1.27.1: treize outils
+// bâtis en go1.27.2 figuraient sous « READ GO SOURCE and are behind go1.27.1 —
+// these do not fail, they MISREPORT ». Ils étaient EN AVANCE. Le test était
+// `t.goVersion != want`, une inégalité de chaînes, et le mot de l'en-tête —
+// « behind » — n'est pas une question à laquelle `!=` peut répondre.
+func TestBehindMeansOlderAndNotMerelyDifferent(t *testing.T) {
+	for _, c := range []struct {
+		got, want string
+		behind    bool
+		why       string
+	}{
+		{"go1.27.1", "go1.27.1", false, "la même chaîne n'est pas en retard"},
+		{"go1.26.4", "go1.27.1", true, "une mineure plus ancienne est en retard"},
+		{"go1.27.2", "go1.27.1", false, "⛔ LE CAS MESURÉ: un correctif PLUS RÉCENT n'est pas en retard"},
+		{"go1.28.0", "go1.27.1", false, "une mineure plus récente non plus"},
+		{"go1.27.0", "go1.27.1", true, "un correctif plus ancien l'est"},
+		// ⛔ Le piège qu'une comparaison lexicographique rate dans l'AUTRE sens:
+		// "go1.27.10" < "go1.27.2" en octets, et c'est faux.
+		{"go1.27.10", "go1.27.2", false, "10 est plus récent que 2, malgré l'ordre des octets"},
+		{"go1.27.2", "go1.27.10", true, "et réciproquement"},
+		// Une version illisible doit être RAPPORTÉE, pas passée en silence: on ne
+		// sait pas ce que son analyseur comprend.
+		{"", "go1.27.1", true, "une chaîne vide est rapportée plutôt que tue"},
+		{"devel +abcdef", "go1.27.1", true, "une version de développement aussi"},
+	} {
+		if got := behind(c.got, c.want); got != c.behind {
+			t.Errorf("behind(%q, %q) = %v, attendu %v — %s", c.got, c.want, got, c.behind, c.why)
+		}
+	}
+}
