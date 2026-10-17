@@ -55,15 +55,29 @@ import (
 	"strings"
 )
 
-const usage = `staletools — which Go tools are built with an older toolchain, and which of those read Go source
+const usage = `staletools — two ways an installed Go tool is not what you think
 
 usage:
-  staletools [-all] [-want go1.27.1] [dir...]
+  staletools [-all] [-want go1.27.1] [-releases] [dir...]
+
+Two axes, and they are different questions:
+
+  the TOOLCHAIN it was built with (default, local, immediate)
+      An analyser built with an older Go than the source it reads does not
+      fail — it misreports. Also names tools installed twice with different
+      toolchains, where PATH order decides which runs.
+
+  -releases   the RELEASE it is (asks the module proxy, so it needs the network)
+      A tool several releases behind does the wrong thing entirely. It marks
+      with → the ones in a directory the shell actually SEARCHES, because one
+      release behind in a directory that runs beats sixty-five behind in one
+      nothing reads.
 
 With no directory it looks at $GOBIN or $GOPATH/bin, and ~/.local/bin.
 
 exit status:
-  0  no SOURCE-READING tool is behind, and no duplicates
+  0  no SOURCE-READING tool is behind, no duplicates, and (with -releases)
+     nothing on an older release
   1  something is behind or shadowed — the message says which
   2  refused: a directory that cannot be read
 `
@@ -83,7 +97,11 @@ var sourceReaders = []string{
 
 type tool struct {
 	name, dir, path, goVersion string
-	readsSource                bool
+	// mod and modVersion are the MODULE the command came from, which is what
+	// the proxy can be asked about. bi.Path is the command's import path and
+	// names no version.
+	mod, modVersion string
+	readsSource     bool
 }
 
 func main() {
@@ -91,6 +109,8 @@ func main() {
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	all := fs.Bool("all", false, "list every Go tool, not only the ones behind")
+	releases := fs.Bool("releases", false, "also ask the module proxy which tools are an OLDER "+
+		"RELEASE of themselves; this one needs the network, so the default run stays local")
 	want := fs.String("want", runtime.Version(), "the toolchain to compare against")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -107,7 +127,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "staletools:", err)
 		os.Exit(2)
 	}
-	if report(os.Stdout, tools, *want, *all) {
+	if report(os.Stdout, tools, *want, *all, *releases) {
 		os.Exit(1)
 	}
 }
@@ -154,6 +174,7 @@ func scan(dirs []string) ([]tool, error) {
 				continue
 			}
 			t := tool{name: e.Name(), dir: dir, path: bi.Path, goVersion: bi.GoVersion}
+			t.mod, t.modVersion = bi.Main.Path, bi.Main.Version
 			paths := make([]string, 0, len(bi.Deps))
 			for _, d := range bi.Deps {
 				paths = append(paths, d.Path)
@@ -172,7 +193,7 @@ func scan(dirs []string) ([]tool, error) {
 }
 
 // report prints, and says whether anything needs doing.
-func report(w io.Writer, tools []tool, want string, all bool) (problem bool) {
+func report(w io.Writer, tools []tool, want string, all bool, releases bool) (problem bool) {
 	byName := map[string][]tool{}
 	for _, t := range tools {
 		byName[t.name] = append(byName[t.name], t)
@@ -248,6 +269,12 @@ func report(w io.Writer, tools []tool, want string, all bool) (problem bool) {
 		len(tools), len(stale), want, len(staleSource))
 	if len(tools) == 0 {
 		fmt.Fprintln(w, "no Go binaries found — is that the right directory?")
+	}
+	// ⛔ The release axis LAST, because the toolchain one is what makes an
+	// analyser lie and this one is what makes a tool do the wrong thing — and a
+	// page of network answers would bury the first.
+	if releases && reportReleases(w, tools) {
+		problem = true
 	}
 	return problem
 }
