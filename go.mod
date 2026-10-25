@@ -11,4 +11,11 @@ module github.com/go-fleettools/staletools
 //
 // Fitting, for the tool whose own job is to notice a reader built against an
 // older Go than the source it reads.
-go 1.27.2
+//
+// Raised again on 2026-10-25 for GO-2026-6809 — crypto/x509, where compromised
+// intermediate certificates are no longer refused by Certificate.Verify — fix
+// RELEASED in 1.27.3. Twice in a fortnight is the useful part: this line is not
+// a floor chosen for the language features it admits. It is the toolchain the
+// security gate judges, and it moves whenever a standard-library advisory is
+// fixed.
+go 1.27.3
