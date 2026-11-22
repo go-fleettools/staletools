@@ -279,9 +279,32 @@ func TestTheHooksPathIsComparedAsADirectoryNotAsASpelling(t *testing.T) {
 	if !sameDir(spelled, dir) {
 		t.Errorf("%q and %q are the same directory", spelled, dir)
 	}
-	if sameDir("", dir) || sameDir(dir, "") {
-		t.Error("an empty hooks path matches nothing: core.hooksPath unset must not make every " +
-			"directory git's")
+}
+
+// ⛔ The empty hooks path, with the one witness that distinguishes the guard
+// from its absence.
+//
+// A mutation sweep reported `a == "" || b == ""` as SURVIVED, and the first
+// reading — "redundant, filepath.Abs of a temp dir never equals the current
+// directory" — was true about the witness and wrong about the code.
+// filepath.Abs("") returns the WORKING DIRECTORY. So with core.hooksPath
+// unset, a run started from inside the hooks directory would find every file
+// there in "git's hooks path", on the strength of where the shell happened to
+// be. The witness has to be a directory that IS the working directory, which
+// is the one case a t.TempDir() in another place can never produce.
+func TestAnUnsetHooksPathMatchesNothingEvenFromInsideTheDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if sameDir(dir, "") || sameDir("", dir) {
+		t.Error("core.hooksPath is unset: nothing is git's configured hooks path, least of all " +
+			"wherever the command was started from")
+	}
+	if runsAsGitHook("pre-push", dir, "") {
+		t.Error("an unset hooks path must not promote the working directory to git's — the " +
+			"answer would change with the shell's cwd and nothing else")
+	}
+	if inertInHooksDir("anything", dir, "") {
+		t.Error("and the same for the group on the other side of the verdict")
 	}
 }
 
@@ -349,6 +372,54 @@ func TestTheReportMarksTheHookGitRunsAndSetsTheCopiesApart(t *testing.T) {
 	}
 	if !strings.Contains(out, "(1 of them RUN)") {
 		t.Errorf("the totals must count what RUNS, which is one of the three:\n%s", out)
+	}
+}
+
+// ⭐ The comparator, at last driven rather than described.
+//
+// ⛔ TestWhatRunsComesFirstWhateverTheDistance is named for this rule and never
+// calls reportReleases: it builds a fixture and asserts the fixture is
+// well-built. A sweep says so plainly — `old[i].live != old[j].live` and
+// `old[i].behind != old[j].behind` both SURVIVED. The rule matters doubly now,
+// since what counts as live is what this change redefines: an arrow that sorts
+// below forty-five releases of noise is an arrow nobody reads.
+func TestWhatRunsSortsFirstAndThenTheGreatestDistance(t *testing.T) {
+	hooks := t.TempDir()
+	elsewhere := t.TempDir()
+	t.Setenv("PATH", "/nowhere/at/all")
+	tools := []tool{
+		{name: "far-and-dead", dir: elsewhere, path: "f/cmd/far", mod: "f", modVersion: "v0.1.0"},
+		{name: "near-and-dead", dir: elsewhere, path: "n/cmd/near", mod: "n", modVersion: "v0.4.0"},
+		{name: "pre-push", dir: hooks, path: "g/cmd/git-pre-push-guard", mod: "g", modVersion: "v0.59.0"},
+	}
+	rels := map[string]release{
+		"f": {Mod: "f", Latest: "v0.4.0",
+			Versions: []string{"v0.1.0", "v0.2.0", "v0.3.0", "v0.4.0"}},
+		"n": {Mod: "n", Latest: "v0.5.0", Versions: []string{"v0.4.0", "v0.5.0"}},
+		"g": {Mod: "g", Latest: "v0.60.0", Versions: []string{"v0.59.0", "v0.60.0"}},
+	}
+	var buf strings.Builder
+	reportReleasesWith(&buf, tools, func(m string) release { return rels[m] }, hooks, nil)
+	out := buf.String()
+
+	at := func(name string) int {
+		i := strings.Index(out, name)
+		if i < 0 {
+			t.Fatalf("%s is missing from the report entirely:\n%s", name, out)
+		}
+		return i
+	}
+	// pre-push is ONE release behind and nothing is on PATH: it is first only
+	// because git runs it.
+	if at("pre-push") > at("far-and-dead") || at("pre-push") > at("near-and-dead") {
+		t.Errorf("the only line something RUNS must lead, whatever the distance:\n%s", out)
+	}
+	// Among the ones nothing runs, the greater distance leads.
+	if at("far-and-dead") > at("near-and-dead") {
+		t.Errorf("three releases back must print above one:\n%s", out)
+	}
+	if !strings.Contains(out, "(1 of them RUN)") {
+		t.Errorf("one of the three is run, by git:\n%s", out)
 	}
 }
 

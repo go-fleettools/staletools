@@ -130,11 +130,15 @@ func sameDir(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	p, err1 := filepath.Abs(a)
-	q, err2 := filepath.Abs(b)
-	if err1 != nil || err2 != nil {
-		return a == b
-	}
+	// ⛔ The errors are dropped on purpose, and the branch that read them is
+	// gone. filepath.Abs fails only when the working directory cannot be
+	// read, and then it fails for BOTH arguments alike — so the fallback
+	// `return a == b` was a second code path that no input could tell from
+	// its own absence: a mutation sweep reported it SURVIVED, and there is no
+	// witness to write. The guard above is what makes this safe, since Abs of
+	// a non-empty path is non-empty.
+	p, _ := filepath.Abs(a)
+	q, _ := filepath.Abs(b)
 	return p == q
 }
 
