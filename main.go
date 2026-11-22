@@ -69,9 +69,14 @@ Two axes, and they are different questions:
 
   -releases   the RELEASE it is (asks the module proxy, so it needs the network)
       A tool several releases behind does the wrong thing entirely. It marks
-      with → the ones in a directory the shell actually SEARCHES, because one
-      release behind in a directory that runs beats sixty-five behind in one
-      nothing reads.
+      with → the ones SOMETHING RUNS, because one release behind in a
+      directory that runs beats sixty-five behind in one nothing reads.
+
+      ⛔ And what runs a file is not only the shell. git executes
+      <core.hooksPath>/<hook-name>, a directory PATH never holds: point this
+      at it and pre-push is ranked as what it is. A file sitting there under
+      a name git does not know — an older homonym of the tool, a .bak copy
+      — is reported apart, since git cannot run it.
 
 With no directory it looks at $GOBIN or $GOPATH/bin, and ~/.local/bin.
 
