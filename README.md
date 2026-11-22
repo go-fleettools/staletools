@@ -87,7 +87,7 @@ No dependencies: `debug/buildinfo` is in the standard library.
 ## Usage
 
 ```
-staletools [-all] [-want go1.27.1] [dir...]
+staletools [-all] [-want go1.27.1] [-releases] [dir...]
 ```
 
 With no directory it looks at `$GOBIN` (or `$GOPATH/bin`, or `~/go/bin`) and
@@ -110,7 +110,7 @@ The default axis asks what a tool was **built with**. This one asks what it **is
 
 ```
 an OLDER RELEASE of themselves — what runs is not what the repository says.
-→ marks the 2 in a directory the shell SEARCHES; the other 19 are in one nothing reads:
+→ marks the 2 SOMETHING RUNS — the shell's PATH, or git's hooks path; the other 19 are where nothing reaches them:
 → pkgx            v0.16.1  → v0.17.1   2 release(s) back   ~/.local/bin
                   go install github.com/go-pkgx/pkgx@v0.17.1
 → bk              v0.27.0  → v0.28.0   1 release(s) back   ~/.local/bin
@@ -131,6 +131,52 @@ written for: of 30 lines, **24 named binaries in `~/go/bin`, which is not on tha
 *above* `pkgx`, 2 behind in the directory that runs. Eighty per cent of the report
 was noise and it was at the top. **One release behind in a directory that runs beats
 sixty-five behind in one nothing reads.**
+
+### ⛔ And `PATH` is not the only thing that runs a file
+
+The founding case above is **a git hook**, and for a year the `→` ranking put git hooks
+in the group it headed *"a directory nothing reads"*. Measured on 2026-11-22, pointed at
+the hooks directory of the machine this was written for:
+
+```
+→ marks the 0 in a directory the shell SEARCHES; the other 9 are in one nothing reads:
+```
+
+Nine lines, no arrow — and two of the nine were `pre-push` and `post-checkout`, the
+binaries git executes on **every push and every checkout**, ranked among seven backup
+copies. The heading was not merely unhelpful, it was false: **git reads that directory.**
+The tool written because of a stale git hook demoted the stale git hook.
+
+So liveness has two sources, read differently. The shell runs a file because its
+**directory** is on `PATH`, whatever the file is called. git runs a file because its
+**name** is a hook name *and* its directory is `core.hooksPath` (or a repository's own
+`.git/hooks`). Same directory, same command, now:
+
+```
+→ marks the 2 SOMETHING RUNS — the shell's PATH, or git's hooks path; the other 0 are where nothing reaches them:
+→ post-checkout          v0.59.0  → v0.60.0   1 release(s) back   ~/.config/git/hooks
+→ pre-push               v0.59.0  → v0.60.0   1 release(s) back   ~/.config/git/hooks
+
+in git's hooks path under a name git NEVER RUNS — copies and witnesses, not an exposure:
+  git-pre-push-guard     v0.40.0  → v0.60.0  32 release(s) back   ~/.config/git/hooks
+  pre-push.bak-20261108-114950 …
+```
+
+That second group is the other half. A file sitting where git looks under a name git does
+**not** know — an older homonym of the *tool* rather than of the *hook*, a `.bak-<stamp>`
+witness that a recopy happened — is one git **cannot** run. That is provably inert, which
+is a stronger statement than *"looks like a backup"*, and it is why the hook names are
+read out of `githooks(5)` rather than guessed: a name that is absent demotes a live hook,
+and a name that is invented puts an arrow on something nothing runs. The list is
+re-read from the installed git by a test, after a first draft written from memory carried
+`proc-receive-pre-remote` — a hook git has never had.
+
+Those inert copies are **reported and counted, but they do not set the exit status**: they
+were seven of nine lines here, every one true and none of them anything to do, and a gate
+that is permanently red for a reason nobody can act on stops being read.
+
+⚠ If git cannot be asked where it looks, the report says so beside the lines the answer
+would have ranked. An unreadable answer is not a verdict that nothing runs them.
 
 ### The oracle is `go list -m -versions`, not a tag listing
 

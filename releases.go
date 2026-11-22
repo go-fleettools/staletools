@@ -120,7 +120,22 @@ func judge(installed string, r release) verdict {
 
 // reportReleases says which installed tools are an older release of themselves.
 // It returns true when something is.
+//
+// ⛔ The proxy and git arrive as PARAMETERS, and that is not decoration. Before
+// they did, every rule in here was reachable only through the network and a
+// `git config`, so the only tests that existed asserted the helpers — and two
+// mutations of the wiring between them, `live: onPath(t.dir)` alone and
+// `dead := false`, both SURVIVED a green suite. A seam that leaves the joining
+// line untested is the defect this fleet keeps paying for, so the joining line
+// is what reportReleasesWith is called with.
 func reportReleases(w io.Writer, tools []tool) bool {
+	home, _ := os.UserHomeDir()
+	hooksPath, hooksErr := gitHooksPath(execRunner(home))
+	return reportReleasesWith(w, tools, askProxy, hooksPath, hooksErr)
+}
+
+func reportReleasesWith(w io.Writer, tools []tool, ask func(string) release,
+	hooksPath string, hooksErr error) bool {
 	mods := map[string]bool{}
 	for _, t := range tools {
 		if t.mod != "" && t.mod != "command-line-arguments" {
@@ -135,7 +150,7 @@ func reportReleases(w io.Writer, tools []tool) bool {
 
 	asked := map[string]release{}
 	for _, m := range names {
-		asked[m] = askProxy(m)
+		asked[m] = ask(m)
 	}
 
 	type row struct {
@@ -143,22 +158,41 @@ func reportReleases(w io.Writer, tools []tool) bool {
 		r      release
 		v      verdict
 		behind int  // how many releases back
-		live   bool // in a directory the shell searches
+		live   bool // something executes it: the shell's PATH, or git
 	}
-	var old, loose, mute []row
+	var old, inert, loose, mute []row
 	for _, t := range tools {
 		r, ok := asked[t.mod]
 		if !ok {
 			continue
 		}
 		v := judge(t.modVersion, r)
-		rw := row{t: t, r: r, v: v, live: onPath(t.dir)}
+		rw := row{t: t, r: r, v: v,
+			live: onPath(t.dir) || runsAsGitHook(t.name, t.dir, hooksPath)}
+		// ⛔ A file git cannot run is not an exposure whichever way it is
+		// out of date, so both of these go to the same place. Running the
+		// patched command is what showed it: routing only the behind-a-
+		// release ones left two .bak copies under "built from a commit that
+		// is NOT a release", a heading that reads as a finding.
+		dead := inertInHooksDir(t.name, t.dir, hooksPath)
 		switch v {
 		case behindRel:
 			rw.behind = len(r.Versions) - 1 - r.has(t.modVersion)
-			old = append(old, rw)
+			if dead {
+				inert = append(inert, rw)
+			} else {
+				old = append(old, rw)
+			}
 		case unreleased:
-			loose = append(loose, rw)
+			if dead {
+				inert = append(inert, rw)
+			} else {
+				loose = append(loose, rw)
+			}
+		// ⛔ unknown is NOT routed here, inert or not. That group means the
+		// proxy could not be asked, and this repository's oldest rule is
+		// that a scan which could not read is never reported as clean. The
+		// subject there is the READING, not the file.
 		case unknown:
 			mute = append(mute, rw)
 		}
@@ -183,8 +217,8 @@ func reportReleases(w io.Writer, tools []tool) bool {
 			}
 		}
 		fmt.Fprintf(w, "\nan OLDER RELEASE of themselves — what runs is not what the repository says.\n")
-		fmt.Fprintf(w, "→ marks the %d in a directory the shell SEARCHES; the other %d are in one nothing reads:\n",
-			live, len(old)-live)
+		fmt.Fprintf(w, "→ marks the %d SOMETHING RUNS — the shell's PATH, or git's hooks path; "+
+			"the other %d are where nothing reaches them:\n", live, len(old)-live)
 		for _, rw := range old {
 			mark := "  "
 			if rw.live {
@@ -193,6 +227,45 @@ func reportReleases(w io.Writer, tools []tool) bool {
 			fmt.Fprintf(w, "%s%-22s %-14s → %-14s %d release(s) back   %s\n",
 				mark, rw.t.name, rw.t.modVersion, rw.r.Latest, rw.behind, rw.t.dir)
 			fmt.Fprintf(w, "  %-22s go install %s@%s\n", "", rw.t.path, rw.r.Latest)
+		}
+	}
+	// ⛔ Reported, counted, and NOT part of the exit status. These are copies
+	// git cannot run: an older homonym of the tool rather than of the hook, or
+	// a .bak-<stamp> witness that a recopy happened. Measured on this machine
+	// they were seven of nine lines in the hooks directory — every one true,
+	// none of them anything to do. Leaving them in the exit status makes a gate
+	// that is permanently red for a reason nobody can act on, and a gate like
+	// that stops being read.
+	if len(inert) > 0 {
+		fmt.Fprintf(w, "\nin git's hooks path under a name git NEVER RUNS — copies and witnesses, "+
+			"not an exposure:\n")
+		for _, rw := range inert {
+			// behind is 0 for a pseudo-version, which appears nowhere in the
+			// released list: printing "0 release(s) back" about one would be
+			// the mistake #3 was fixed for, in a new place.
+			distance := "not a released version"
+			if rw.behind > 0 {
+				distance = fmt.Sprintf("%d release(s) back", rw.behind)
+			}
+			fmt.Fprintf(w, "  %-22s %-30s → %-10s %-22s %s\n",
+				rw.t.name, rw.t.modVersion, rw.r.Latest, distance, rw.t.dir)
+		}
+	}
+	// ⛔ And if git could not be asked where it looks, say so HERE, beside the
+	// lines the answer would have ranked. Silence would present a demoted hook
+	// as a measured one — the oldest defect in this fleet, in the one place
+	// this change could reintroduce it.
+	if hooksErr != nil {
+		named := 0
+		for _, t := range tools {
+			if gitHookNames[t.name] {
+				named++
+			}
+		}
+		if named > 0 {
+			fmt.Fprintf(w, "\n⛔ git could not be asked where it looks for hooks (%v), and %d scanned "+
+				"file(s) bear a hook name: their ranking above is UNPROVEN, not a verdict that "+
+				"nothing runs them.\n", hooksErr, named)
 		}
 	}
 	if len(loose) > 0 {
@@ -221,8 +294,8 @@ func reportReleases(w io.Writer, tools []tool) bool {
 			liveOld++
 		}
 	}
-	fmt.Fprintf(w, "\n%d module(s) asked: %d tool(s) on an older release (%d of them on PATH), "+
-		"%d from an unreleased commit, %d unanswerable\n",
-		len(names), len(old), liveOld, len(loose), len(mute))
+	fmt.Fprintf(w, "\n%d module(s) asked: %d tool(s) on an older release (%d of them RUN), "+
+		"%d from an unreleased commit, %d unrunnable copies in git's hooks path, %d unanswerable\n",
+		len(names), len(old), liveOld, len(loose), len(inert), len(mute))
 	return len(old) > 0
 }
